@@ -1,0 +1,29 @@
+# 비밀값. 예시(.env.example)만 올린다. 배포용 .env는 GitHub Actions가 secrets로 만든다
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# 실행 로그
+logs/
+*.log
+
+# 이 PC 전용 설정(절대 경로). Claude Code stdio 연결용
+.mcp.json
+.claude/settings.local.json
+
+# 원천 데이터: 법정동코드 파일(행정안전부 KIKcd_B, 국토부 CSV). 크고 공개 출처에서 다시 받는다(PROGRESS.md "개발 환경")
+KIKcd_*.txt
+*법정동코드*.csv
+
+# etl.flags --candidates 출력(사람 검토용, 다시 만든다). 기준 파일 db/danji_flag.csv는 올린다
+db/danji_flag_candidates.csv
+
+# IDE
+.idea/
+.vscode/

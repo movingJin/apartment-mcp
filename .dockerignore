@@ -1,0 +1,7 @@
+# 빌드 컨텍스트에는 이미지에 넣을 파일만 둔다(허용 목록). .env(비밀번호·토큰)와 데이터 파일은 넘기지 않는다
+*
+!etl/__init__.py
+!etl/records.py
+!etl/regions.py
+!mcp_server/
+**/__pycache__
