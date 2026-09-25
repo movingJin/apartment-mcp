@@ -71,7 +71,7 @@ set -a && . ./.env && set +a                               # 모든 명령 전�
 `main`에 push하면 GitHub Actions(`.github/workflows/deploy-prod.yml`, reco-act와 같은 방식)가 배포한다. Actions 탭에서 수동 실행도 된다.
 
 1. `test`: DB 없이 pytest(DB 테스트는 건너뜀, 133개), 이미지 빌드, 이미지 스모크 테스트(이미지 안 파일이 `etl`·`mcp_server`뿐인지, `/healthz`, 토큰 없음 401, 토큰으로 `tools/list` 200)
-2. `build`: 배포 경로가 git 작업 폴더면 멈춤 → secrets로 `.env`(MCP 두 값만) 작성 → `docker-compose.yml`·`.dockerignore`·`.env`·`mcp_server/*`·`etl` 세 파일을 `${SERVICE_ROOT}/apartment-mcp`로 전송
+2. `build`: secrets로 `.env`(MCP 두 값만) 작성 → `docker-compose.yml`·`.dockerignore`·`.env`·`mcp_server/*`·`etl` 세 파일을 `${SERVICE_ROOT}/apartment-mcp`로 전송
 3. `deploy`: NAS에서 `docker-compose build mcp` → `up -d mcp` → `image prune` → `/healthz`를 60초까지 기다린다(실패하면 로그 50줄)
 
 GitHub secrets(저장소 Settings → Secrets and variables → Actions):
@@ -79,7 +79,7 @@ GitHub secrets(저장소 Settings → Secrets and variables → Actions):
 | 이름 | 값 |
 | --- | --- |
 | `PROD_HOST`, `PROD_PORT`, `PROD_USERNAME`, `PROD_PRIVATE_KEY` | NAS SSH 접속(reco-act와 같은 값) |
-| `SERVICE_ROOT` | NAS 배포 루트(reco-act와 같은 값). `${SERVICE_ROOT}/apartment-mcp`가 이 개발 폴더(`~/Projects/apartment-mcp`)와 같으면 안 된다. 같으면 워크플로가 멈춘다 |
+| `SERVICE_ROOT` | NAS 배포 루트(reco-act와 같은 값). 배포 폴더 `${SERVICE_ROOT}/apartment-mcp`는 이 개발 폴더와 다르다(사용자 확인) |
 | `MCP_DATABASE_URL`, `MCP_API_TOKEN` | 개발 `.env`의 같은 이름 값(`grep '^MCP_' .env`) |
 
 수동으로 띄울 때(배포 경로에서, `.env`에 MCP 두 값이 있어야 한다):

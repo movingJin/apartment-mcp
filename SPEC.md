@@ -811,5 +811,5 @@ Synology 보급형은 RAM이 4\~8GB인 경우가 많다. PostgreSQL 튜닝을 �
 | HTTP 방식 | 명시 없음 | Streamable HTTP, 경로 `/mcp`, stateless + JSON 응답 | 서버가 먼저 보내는 알림이 없다. 요청마다 독립이라 재시작·프록시에 강하다 |
 | Host 헤더 검사 | 명시 없음(SDK는 host가 127.0.0.1이면 자동으로 켠다) | 끈다 | 켜진 채로 공개 도메인 Host가 오면 421로 막힌다. 막아 주는 공격(DNS rebinding)은 토큰으로 이미 막힌다 |
 | 컨테이너 | "세 컨테이너"(db, etl, mcp) | `mcp` 서비스 추가, 읽기 전용 접속 문자열과 토큰만 넘김. `db` 서비스는 프로필 `local-db`로 기본에서 뺐다 | 개발 DB는 NAS의 다른 PostgreSQL(호스트 25432)이다. 그대로 두면 `docker compose up`이 빈 DB를 하나 더 띄운다 |
-| 배포 | 명시 없음 | GitHub Actions: `test`(DB 없이 pytest, 이미지 빌드·스모크) → `build`(secrets로 `.env` 작성, NAS로 scp) → `deploy`(ssh로 compose build·up, `/healthz` 확인). 사용자가 쓰는 reco-act 워크플로와 같은 방식 | 사용자 지시. 트리거는 PR이 아니라 `main` push(병합 전 코드가 운영에 나가지 않게). 배포 경로가 git 작업 폴더면 멈춘다(`/home`이 NAS 볼륨이라 개발 폴더와 겹치면 개발용 `.env`를 덮어쓴다) |
+| 배포 | 명시 없음 | GitHub Actions: `test`(DB 없이 pytest, 이미지 빌드·스모크) → `build`(secrets로 `.env` 작성, NAS로 scp) → `deploy`(ssh로 compose build·up, `/healthz` 확인). 사용자가 쓰는 reco-act 워크플로와 같은 방식 | 사용자 지시. 트리거는 PR이 아니라 `main` push(병합 전 코드가 운영에 나가지 않게). 배포 폴더(`${SERVICE_ROOT}/apartment-mcp`)는 개발 폴더와 다르다(사용자 확인) |
 | 확인 | — | 로컬: 토큰 없음·틀림 401, 공개 도메인 Host로 200, MCP 클라이언트로 HTTP 경유 도구 호출. 이미지 내용 재현(빈 가상환경 + 고정 의존성 + 환경변수만)으로 동작. 테스트 14개 | 이 PC(NAS 안의 kasm)에서는 공인 IP로 나가는 연결(80·443)이 시간 초과라 공개 주소는 외부망에서 확인해야 한다 |

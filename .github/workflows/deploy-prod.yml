@@ -3,7 +3,7 @@ name: apartment-mcp release to NAS
 # main에 push되면 테스트 → 이미지 확인 → NAS로 전송 → mcp 컨테이너 재시작. Actions 탭에서 수동 실행도 된다.
 # 필요한 secrets
 #   PROD_HOST, PROD_PORT, PROD_USERNAME, PROD_PRIVATE_KEY : NAS SSH 접속
-#   SERVICE_ROOT      : NAS 배포 루트. 파일은 ${SERVICE_ROOT}/apartment-mcp에 놓인다(개발 작업 폴더와 달라야 한다)
+#   SERVICE_ROOT      : NAS 배포 루트. 파일은 ${SERVICE_ROOT}/apartment-mcp에 놓인다
 #   MCP_DATABASE_URL  : 읽기 전용 계정 접속 문자열(apartment_mcp)
 #   MCP_API_TOKEN     : claude.ai 커넥터가 보내는 토큰(32자 이상)
 on:
@@ -63,22 +63,6 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v7
-
-      # 배포 경로가 git 작업 폴더면 멈춘다. 개발용 .env(ETL superuser·공공데이터 키)를 덮어쓰지 않게 한다
-      - name: Check deploy target
-        uses: appleboy/ssh-action@v1.2.5
-        with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_USERNAME }}
-          key: ${{ secrets.PROD_PRIVATE_KEY }}
-          port: ${{ secrets.PROD_PORT }}
-          script: |
-            TARGET="${{ secrets.SERVICE_ROOT }}/apartment-mcp"
-            if [ -d "$TARGET/.git" ]; then
-              echo "배포 경로 $TARGET 이 git 작업 폴더다. SERVICE_ROOT를 확인할 것"
-              exit 1
-            fi
-            mkdir -p "$TARGET"
 
       # 컨테이너에 넘길 값만 담는다(compose가 ${MCP_DATABASE_URL}·${MCP_API_TOKEN}으로 읽는다)
       - name: Set ENV file
