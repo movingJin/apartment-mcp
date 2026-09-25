@@ -1,0 +1,20 @@
+[project]
+name = "apartment-mcp"
+version = "0.1.0"
+description = "수도권 아파트 입지 분석 DB와 MCP 서버"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "mcp>=2.2",
+    "psycopg[binary]>=3.1",
+    "tenacity>=8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

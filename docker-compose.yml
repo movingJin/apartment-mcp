@@ -1,0 +1,38 @@
+services:
+  # 지금 개발 DB는 NAS의 다른 PostgreSQL 컨테이너(호스트 25432)라 기본으로 띄우지 않는다.
+  # 새로 DB를 띄울 때만: docker compose --profile local-db up -d db
+  db:
+    image: postgres:16
+    profiles: ["local-db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: apartment
+      POSTGRES_USER: apartment
+      # 필수 표시(:?)를 두면 compose가 mcp만 띄울 때도 이 값을 요구한다. 비어 있으면 postgres 이미지가 초기화를 거부한다
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    # DB는 외부에 노출하지 않는다. 호스트에서 ETL을 돌릴 때만 루프백으로 접속한다.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # MCP 서버(HTTP, claude.ai 커넥터용). https://apartment-mcp.movingjin.com → 이 NAS의 28001
+  #   docker compose up -d --build mcp
+  # 읽기 전용 계정과 토큰만 넘긴다(.env의 SERVICE_KEY·DATABASE_URL은 넘기지 않는다)
+  mcp:
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile
+    image: apartment-mcp:latest
+    restart: unless-stopped
+    environment:
+      MCP_DATABASE_URL: ${MCP_DATABASE_URL:?MCP_DATABASE_URL을 .env에 설정할 것}
+      MCP_API_TOKEN: ${MCP_API_TOKEN:?MCP_API_TOKEN을 .env에 설정할 것}
+    ports:
+      - "28001:28001"
+    # MCP_DATABASE_URL의 host.docker.internal(= NAS 호스트)을 컨테이너 안에서도 쓰게 한다
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pgdata:
