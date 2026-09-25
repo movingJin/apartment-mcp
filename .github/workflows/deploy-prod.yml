@@ -1,0 +1,135 @@
+name: apartment-mcp release to NAS
+
+# main에 push되면 테스트 → 이미지 확인 → NAS로 전송 → mcp 컨테이너 재시작. Actions 탭에서 수동 실행도 된다.
+# 필요한 secrets
+#   PROD_HOST, PROD_PORT, PROD_USERNAME, PROD_PRIVATE_KEY : NAS SSH 접속
+#   SERVICE_ROOT      : NAS 배포 루트. 파일은 ${SERVICE_ROOT}/apartment-mcp에 놓인다(개발 작업 폴더와 달라야 한다)
+#   MCP_DATABASE_URL  : 읽기 전용 계정 접속 문자열(apartment_mcp)
+#   MCP_API_TOKEN     : claude.ai 커넥터가 보내는 토큰(32자 이상)
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install "httpx>=0.27" "tenacity>=8" "pytest>=8" -r mcp_server/requirements.txt
+
+      # DB가 없으므로 DB 테스트(DATABASE_URL·MCP_DATABASE_URL 필요)는 건너뛰고 파서·API 클라이언트·인증 등만 돈다
+      - name: Unit tests
+        run: python -m pytest -q
+
+      - name: Build image
+        run: docker build -f mcp_server/Dockerfile -t apartment-mcp:ci .
+
+      # 이미지 안 파일(.dockerignore 허용 목록)과 HTTP 인증을 확인한다. tools/list는 DB를 읽지 않는다
+      - name: Smoke test image
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm --entrypoint ls apartment-mcp:ci -A /app | tr '\n' ' ')" = "etl mcp_server "
+          TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+          docker run -d --name smoke -p 28001:28001 \
+            -e MCP_DATABASE_URL=postgresql://ci@127.0.0.1:1/ci -e MCP_API_TOKEN="$TOKEN" apartment-mcp:ci
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:28001/healthz >/dev/null && break; sleep 1; done
+          test "$(curl -s http://127.0.0.1:28001/healthz)" = ok
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:28001/mcp)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:28001/mcp \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')" = 200
+
+      - name: Smoke test logs
+        if: failure()
+        run: docker logs smoke || true
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+
+      # 배포 경로가 git 작업 폴더면 멈춘다. 개발용 .env(ETL superuser·공공데이터 키)를 덮어쓰지 않게 한다
+      - name: Check deploy target
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_PRIVATE_KEY }}
+          port: ${{ secrets.PROD_PORT }}
+          script: |
+            TARGET="${{ secrets.SERVICE_ROOT }}/apartment-mcp"
+            if [ -d "$TARGET/.git" ]; then
+              echo "배포 경로 $TARGET 이 git 작업 폴더다. SERVICE_ROOT를 확인할 것"
+              exit 1
+            fi
+            mkdir -p "$TARGET"
+
+      # 컨테이너에 넘길 값만 담는다(compose가 ${MCP_DATABASE_URL}·${MCP_API_TOKEN}으로 읽는다)
+      - name: Set ENV file
+        env:
+          MCP_DATABASE_URL: ${{ secrets.MCP_DATABASE_URL }}
+          MCP_API_TOKEN: ${{ secrets.MCP_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$MCP_DATABASE_URL" || { echo "MCP_DATABASE_URL secret이 없다"; exit 1; }
+          test ${#MCP_API_TOKEN} -ge 32 || { echo "MCP_API_TOKEN secret이 없거나 32자보다 짧다"; exit 1; }
+          umask 077
+          printf 'MCP_DATABASE_URL=%s\nMCP_API_TOKEN=%s\n' "$MCP_DATABASE_URL" "$MCP_API_TOKEN" > .env
+
+      - name: Transfer files
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_PRIVATE_KEY }}
+          port: ${{ secrets.PROD_PORT }}
+          source: "docker-compose.yml,.dockerignore,.env,mcp_server/*,etl/__init__.py,etl/records.py,etl/regions.py"
+          target: ${{ format('{0}/apartment-mcp', secrets.SERVICE_ROOT) }}
+          overwrite: true
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to NAS
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_PRIVATE_KEY }}
+          port: ${{ secrets.PROD_PORT }}
+          command_timeout: 30m
+          script: |
+            set -e
+            cd "${{ secrets.SERVICE_ROOT }}/apartment-mcp"
+            PATH="/var/packages/ContainerManager/target/usr/bin/:$PATH"
+            chmod 600 .env
+            docker-compose build mcp
+            docker-compose up -d mcp
+            docker image prune -f
+            for i in $(seq 1 30); do
+              if curl -fs http://127.0.0.1:28001/healthz >/dev/null; then
+                echo "healthz ok"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "healthz 응답 없음"
+            docker-compose logs --tail 50 mcp
+            exit 1
