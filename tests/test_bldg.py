@@ -108,6 +108,17 @@ def test_non_numeric_value_is_an_error():
         derive([], [{**titles[0], "vlrat": "N/A"}])
 
 
+def test_out_of_range_ratio_is_missing():
+    # 실제 원문 오류: 장안힐스테이트 용적률 249,024.56, 성원상떼빌 건폐율 80,807.81. 그 항목만 값 없음
+    _, titles = case("single")
+    v = derive([], [{**titles[0], "vlrat": "249024.56"}])
+    assert (v.households, v.far, v.bcr) == (265, None, Decimal("40.22"))
+    # 총괄표제부 값이 범위 밖이면 0처럼 주건축물 1동의 표제부 값으로 넘어간다
+    recap = {"mgmbldrgstpk": "1", "regstrgbcd": "2", "hhldcnt": "265", "vlrat": "249024.56", "bcrat": "80807.81"}
+    v = derive([recap], titles)
+    assert (v.far, v.bcr) == (Decimal("1030.53"), Decimal("40.22"))
+
+
 # ---------------------------------------------------------------- 계획
 
 P385 = Parcel("1141012000", "0", "0385", "0000")
@@ -259,6 +270,23 @@ def test_refetch_error_keeps_previous_values(conn):
     ).fetchone() == ("error", 4300)
     assert conn.execute("SELECT count(*) FROM bldg_title WHERE lawd_cd = %s", (DONG,)).fetchone()[0] == 102
     assert Task("title", DONG, P385) in plan_tasks([P385], *done_sets(conn), force=False)  # 다음 실행이 다시 받는다
+
+
+@needs_db
+@pytest.mark.parametrize(
+    ("bad", "stopped"),
+    [
+        ([{**case("single")[1][0], "vlrat": "N/A"}], None),  # 원문 값 오류: API는 응답했다
+        (403, "연속 5회 실패"),  # 호출 실패
+    ],
+)
+def test_only_call_failures_stop_the_run(conn, bad, stopped):
+    # 전날 실패한 필지는 다음 실행의 맨 앞에 모인다. 원문 값 오류 5개가 매번 실행을 멈추면 안 된다
+    failing = [Parcel(DONG, "0", f"{9000 + i}", "0000") for i in range(1, 6)]
+    tasks = [Task("title", DONG, p) for p in failing + [P385]]
+    with mock_hub({**{p: bad for p in failing}, P385: case("shared_recap")[1]}) as client:
+        summary = run_tasks(conn, client, tasks, {DONG})
+    assert (len(summary.failures), summary.stopped, summary.ok) == (5, stopped, 0 if stopped else 1)
 
 
 @needs_db

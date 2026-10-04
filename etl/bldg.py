@@ -15,7 +15,9 @@
 - 한 법정동은 총괄표제부 → 그 동의 필지 표제부 순서로 받는다. 파생 값에 총괄표제부가 필요해서
   총괄표제부를 못 받은 동의 필지는 이번 실행에서 건너뛴다
 - 받은 법정동·필지는 다음 실행에서 건너뛴다('not_found'도 받은 것이다). 'error'는 다시 받는다
-- 일일 한도 초과 응답이 오거나 연속 5회 실패하면 멈춘다. 같은 명령을 다시 실행하면 이어서 받는다
+- 일일 한도 초과 응답이 오거나 호출이 연속 5회 실패하면 멈춘다. 같은 명령을 다시 실행하면 이어서 받는다.
+  응답은 받았는데 원문 값이 형식에 안 맞는 필지(ValueError)는 실패로 기록하지만 연속 실패로 세지 않는다
+  (실패 필지는 다음 실행의 맨 앞에서 다시 받으므로, 세면 그런 필지 5개가 매번 실행을 멈춘다)
 - 실행이 끝나면 bldg_parcel 값을 danji에 반영한다(apply_to_danji). 한 필지에 단지가 여럿이면
   모든 단지에 필지 값을 넣고 bldg_danji_cnt에 단지 수를 적는다(2 이상이면 필지 합계)
 """
@@ -114,10 +116,10 @@ def _int(n: Decimal | None) -> int | None:
 
 
 def _ratio(item: dict[str, str], tag: str) -> Decimal | None:
+    """용적률·건폐율. 저장 범위를 넘는 값은 원문 오류로 보고 값 없음으로 둔다(용적률 249,024.56% 등).
+    원문은 bldg_recap·bldg_title에 그대로 남는다."""
     n = _positive(item, tag)
-    if n is not None and n > _RATIO_MAX:
-        raise ValueError(f"{tag}가 범위를 벗어남: {n}")
-    return n
+    return None if n is not None and n > _RATIO_MAX else n
 
 
 def _date(value: str) -> date | None:
@@ -158,7 +160,7 @@ def derive(recaps: Sequence[dict[str, str]], titles: Sequence[dict[str, str]]) -
     - 동 수·최고층·사용승인일은 항상 표제부 주거동에서 센다. 주거동은 주건축물 중 주용도가 공동주택이고
       세대가 있는 동이다. 공동주택 용도로 등록된 상가·노유자시설동(세대 0)은 빠진다. 없으면 세대가 있는
       주건축물(주상복합·도시형생활주택은 주용도가 업무시설 등이다), 그것도 없으면 공동주택 주건축물이다
-    - 0은 값 없음이다
+    - 0은 값 없음이다. 용적률·건폐율이 9,999.99를 넘어도 값 없음이다(원문 오류)
     """
     recap = pick_recap(recaps) or {}
     main = [t for t in titles if t.get("mainatchgbcd") == "0"]
@@ -452,7 +454,8 @@ def run_tasks(conn: psycopg.Connection, client: HubClient, tasks: Sequence[Task]
                 record_parcel_error(conn, task.parcel, msg)
             summary.failures.append((task, msg))
             print(f"{label}: FAILED {msg}", file=sys.stderr)
-            consecutive += 1
+            # 원문 값 오류(ValueError)는 API가 응답했다는 뜻이라 연속 실패로 세지 않는다
+            consecutive = 0 if isinstance(e, ValueError) else consecutive + 1
             if isinstance(e, QuotaExceeded):
                 summary.stopped = "일일 한도 초과"
             elif consecutive >= MAX_CONSECUTIVE_FAILURES:
