@@ -34,5 +34,27 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # ETL 스케줄러. 매일 00:10(한국 시간)에 증분 수집 → 건축물대장 → etl.refresh (etl/cron.py)
+  #   docker compose up -d --build etl
+  #   docker compose exec etl python -m etl.cron --once   # 지금 한 번 돌리기
+  # 쓰기 권한 접속 문자열과 공공데이터 키는 이 컨테이너에만 넘긴다(mcp에는 넘기지 않는다). 포트는 열지 않는다
+  etl:
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
+    image: apartment-etl:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL을 .env에 설정할 것}
+      SERVICE_KEY: ${SERVICE_KEY:?SERVICE_KEY를 .env에 설정할 것}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # 하루 수천 줄을 계속 쌓는다
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 volumes:
   pgdata:

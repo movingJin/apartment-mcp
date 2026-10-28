@@ -1,6 +1,6 @@
 # 진행 상황
 
-마지막 갱신: 2026-09-27
+마지막 갱신: 2026-10-28
 
 새 세션은 이 파일과 `SPEC.md`를 먼저 읽는다. SPEC은 API를 호출해 보기 전에 쓴 계획이라, 실측과 다른 부분은 SPEC 끝 "변경 이력"에 근거와 함께 고쳐 두었다.
 
@@ -12,7 +12,7 @@
   - 수집 후 점검과 단지 위치 보정까지 끝냈다(아래 "전체 수집 점검 결과", "단지 위치 보정")
 - **4단계(건축물대장 부가정보) 구현 완료, 서대문구 시험 실행 완료**(2026-09-25). 설계 결정 3가지는 사용자 승인(SPEC 변경 이력 4단계): 총괄표제부가 없으면 표제부로 계산, 한 필지 여러 단지는 필지 합계 + `bldg_danji_cnt`, 원문 JSONB 저장
   - 서대문구 342단지 중 336 채움, 없음 6(1.8%). 목표 5% 이하
-- 건축물대장 수도권 전체 조회는 사용자가 실행 중이다(아래 "건축물대장 전체 실행"). 끝나면 "건축물대장 전체 실행 뒤 점검"을 한다
+- 건축물대장 수도권 전체 조회는 끝났다(2026-10-28 DB로 확인: 필지 20,304개 중 ok 19,982 / not_found 322 / error 0). "건축물대장 전체 실행 뒤 점검"(아래 "이후 단계 메모")은 아직 안 했다
   - 1일째(2026-09-25) 한도 초과로 멈춤: 필지 ok 8,944 / not_found 108 / error 3
   - 2일째(2026-09-26) 한도 초과로 멈춤: 필지 ok 18,739 / not_found 306 / error 7(원문 값 오류 6, 한도 초과 1). 세대수 있는 단지 19,002 / 20,724. 남은 것은 경기 13개 시군구(안성·김포·화성 4개 구·광주·양주·포천·여주·연천·가평·양평)의 표제부 1,249필지 + 총괄표제부 179개 법정동, 호출 약 1,434회
   - 3일째(2026-09-27) 첫 실행은 6초 만에 멈췄다: 전날 원문 값 오류(용적률·건폐율이 `NUMERIC(6,2)` 범위 밖) 필지 6개가 대기열 맨 앞에 모여 "연속 5회 실패"에 걸렸다. 범위 밖 값은 그 항목만 NULL, 원문 값 오류는 연속 실패로 세지 않게 고쳤다(사용자 승인, SPEC 변경 이력 2026-09-27). **같은 명령을 다시 실행하면 6필지와 남은 것을 모두 받는다**
@@ -25,10 +25,14 @@
   - `mcp_server/web.py`(토큰 미들웨어, `/healthz`), `mcp_server/Dockerfile`, `mcp_server/requirements.txt`, `.dockerignore`, `docker-compose.yml`의 `mcp` 서비스, `.env`에 `MCP_API_TOKEN`, 테스트 14개 추가(전체 356개 통과)
   - 배포는 GitHub Actions(`.github/workflows/deploy-prod.yml`, `main` push). 저장소 `github.com/movingJin/apartment-mcp`. `.gitignore` 작성, 형상관리 대상 첫 커밋(2026-09-25)
   - 요청 경로: 공유기 443 → NAS 20443(Nginx Proxy Manager, Let's Encrypt 인증서) → NAS 28001(컨테이너, 평문 HTTP). 처음엔 NPM 프록시 호스트 Scheme이 `https`라 502였다(컨테이너 로그 `Invalid HTTP request received`). `http`로 고쳐 해결
+- **자동 수집(cron) 구현 완료, 배포 전**(2026-10-28). NAS `etl` 컨테이너의 스케줄러 `etl.cron`이 매일 00:10(한국 시간)에 매매(일요일 12개월, 평소 3개월) → 전월세 3개월 → `etl.bldg`(새 필지) → `etl.refresh`를 돈다. 실행 시각은 사용자 지정, 비밀값(GitHub secrets)과 작업 범위는 사용자 승인. SPEC "cron 구성"·보안과 변경 이력 "자동 수집(cron) 구성"에 반영
+  - `etl/cron.py`, `etl/Dockerfile`, `etl/requirements.txt`, `docker-compose.yml`의 `etl` 서비스, `.dockerignore`(`etl/` 허용), 배포 워크플로(ETL 이미지 확인, `.env`에 두 값 추가, 배포 뒤 스케줄러 기동 확인), 테스트 7개(`tests/test_cron.py`)
+  - 배포하려면 GitHub secrets에 `DATABASE_URL`·`SERVICE_KEY`(개발 `.env`와 같은 값)를 넣고 push한다. 아래 "NAS 배포"
+  - 이 PC(kasm 컨테이너)에는 cron 데몬이 없어서 NAS에 올렸다. Docker도 없어 ETL 이미지 빌드는 CI에서 처음 한다
 - **다음(남은 일, 우선순위 순)**
-  1. 자동 수집·갱신: SPEC "cron 구성"(매일 증분 수집 + `etl.refresh`, 주 1회 12개월 매매)이 아직 없다. 지금은 사람이 kasm에서 돌려야 하고, 안 돌리면 다음 날부터 응답에 `meta.warning`(며칠 전 기준)이 붙는다. ETL을 NAS 컨테이너 + 스케줄로 올리는 방식을 정해야 한다(실행 위치, ETL용 DB 계정, secrets)
-  2. 건축물대장 전체 조회 마무리(사용자, 3일째 재실행)와 점검(아래 "이후 단계 메모"). 세대수 있는 단지 19,002 / 20,724. 분당·수지·기흥·성남·강동은 채워졌다
-  3. 최근 12개월 재수집 1회(사용자, 아래 "12개월 재수집 1회"). 결과로 전월세도 주 1회 12개월을 받을지 정한다
+  1. 자동 수집 배포와 첫 실행 확인: secrets 추가 → push → Actions의 deploy 로그에 `다음 실행: … 00:10` → 다음 날 아침 `mv_refresh_log`에 그날 기준일, `ingest_log` `fetched_at`이 00:1x(아래 "자동 수집")
+  2. 건축물대장 전체 실행 뒤 점검(아래 "이후 단계 메모"). 전체 조회는 끝났다
+  3. 전월세 지연 신고 규모 측정 1회(사용자, 아래 "12개월 재수집 1회"). 매매 12개월은 이제 일요일 자동 실행이 받는다(첫 실행 2026-11-01). 전월세도 주 1회 12개월을 받을지 이 결과로 정한다
   4. 실사용 피드백: claude.ai에서 실제 질문으로 도구 선택·응답 크기(`search_candidates` 50행 약 30KB)·설명문을 다듬는다. 첫 사용(2026-09-26) 관찰은 아래 "실사용 관찰"
   5. 역세권(보류 중): 차 없는 통근이 핵심 기준인데 단지·역 좌표가 없다. 데이터 출처를 정해야 한다
   6. 운영: `pg_dump` 주 1회 백업(SPEC "운영"), 필요하면 NPM 접근 목록으로 `160.79.104.0/21`만 허용
@@ -44,8 +48,9 @@
 | MCP | 공식 SDK `mcp` 2.2(`MCPServer`). 운영: NAS 컨테이너(HTTP 28001, `https://apartment-mcp.movingjin.com/mcp`, 토큰 `MCP_API_TOKEN`). 개발 확인: Claude Code가 `.mcp.json`(절대 경로)으로 stdio 실행 |
 | Python | 프로젝트 `.venv`(시스템 Python 3.10.18, SPEC 기술 스택과 같음). `pyproject.toml`의 `requires-python >=3.10` |
 | 로컬 PC | Docker 없음, PostgreSQL 서버 없음(psql 12 클라이언트만) |
-| `.env` | `SERVICE_KEY`(디코딩 키), `POSTGRES_PASSWORD`, `DATABASE_URL` |
-| `docker-compose.yml` | `db` 서비스만 있음. 로컬에 Docker가 없어 실행해 본 적 없음 |
+| ETL 자동 실행 | NAS `etl` 컨테이너(`etl.cron`, 매일 00:10 한국 시간). 접속은 `DATABASE_URL`(개발과 같은 superuser, `host.docker.internal:25432`) |
+| `.env` | `SERVICE_KEY`(디코딩 키), `POSTGRES_PASSWORD`, `DATABASE_URL`, `MCP_DATABASE_URL`, `MCP_API_TOKEN` |
+| `docker-compose.yml` | `mcp`, `etl`, `db`(프로필 `local-db`, 기본으로 안 띄움). 로컬에 Docker가 없어 NAS에서만 실행한다 |
 
 저장소는 `github.com/movingJin/apartment-mcp`다(2026-09-25에 새로 clone한 폴더로 옮겼고 옛 폴더는 `~/Projects/apartment-mcp_2`). git에 없는 것: `.env`(비밀값, `.env.example` 참고), `.mcp.json`(이 PC 절대 경로), `.venv`, `logs/`, 법정동코드 원천 파일(`KIKcd_B…txt`는 행안부 공지 `jscode20260701(말소코드포함).zip`, 국토부 CSV는 data.go.kr), `db/danji_flag_candidates.csv`(`etl.flags --candidates` 출력). 새 PC에서는 `.env`와 원천 파일을 따로 가져온다.
 
@@ -69,6 +74,8 @@ set -a && . ./.env && set +a                               # 모든 명령 전�
 .venv/bin/python -m etl.bldg --rederive                    # 저장된 원문에서 파생 값 재계산 (API 호출 없음)
 .venv/bin/python -m etl.collect --mode incremental --kind sale --recent 12   # 최근 12개월 매매 (주 1회 cron용)
 .venv/bin/python -m etl.refresh                            # 파생 지표 mv_* 전부 다시 계산 (약 2분). 수집·예외 목록 변경 뒤
+.venv/bin/python -m etl.cron --plan                        # 자동 실행: 다음 실행 시각과 단계 (API·DB 접속 없음)
+.venv/bin/python -m etl.cron --once                        # 자동 실행 단계를 지금 한 번 (수집 → 건축물대장 → refresh)
 .venv/bin/python -m etl.flags --candidates                 # 예외 목록 후보 → db/danji_flag_candidates.csv
 .venv/bin/python -m etl.flags --load                       # db/danji_flag.csv → danji_flag (파일이 기준, 없는 행은 지움)
 .venv/bin/python -m mcp_server                             # MCP 서버(stdio). 보통은 Claude Code가 .mcp.json으로 띄운다
@@ -76,13 +83,13 @@ set -a && . ./.env && set +a                               # 모든 명령 전�
 .venv/bin/python -m pytest                                 # DATABASE_URL·MCP_DATABASE_URL이 없으면 DB 테스트는 건너뛴다
 ```
 
-### MCP 서버 배포 (NAS 컨테이너, claude.ai 커넥터)
+### NAS 배포 (MCP 서버 + ETL 스케줄러)
 
 `main`에 push하면 GitHub Actions(`.github/workflows/deploy-prod.yml`, reco-act와 같은 방식)가 배포한다. Actions 탭에서 수동 실행도 된다.
 
-1. `test`: DB 없이 pytest(DB 테스트는 건너뜀, 133개), 이미지 빌드, 이미지 스모크 테스트(이미지 안 파일이 `etl`·`mcp_server`뿐인지, `/healthz`, 토큰 없음 401, 토큰으로 `tools/list` 200)
-2. `build`: secrets로 `.env`(MCP 두 값만) 작성 → `docker-compose.yml`·`.dockerignore`·`.env`·`mcp_server/*`·`etl` 세 파일을 `${SERVICE_ROOT}/apartment-mcp`로 전송
-3. `deploy`: NAS에서 `docker-compose build mcp` → `up -d mcp` → `image prune` → `/healthz`를 60초까지 기다린다(실패하면 로그 50줄)
+1. `test`: DB 없이 pytest(DB 테스트는 건너뜀), MCP 이미지 빌드·스모크 테스트(이미지 안 파일이 `etl`·`mcp_server`뿐인지, `/healthz`, 토큰 없음 401, 토큰으로 `tools/list` 200), ETL 이미지 빌드·스모크 테스트(파일이 `etl`뿐인지, 단계 모듈 import, `etl.cron --plan`)
+2. `build`: secrets로 `.env`(MCP 두 값 + `DATABASE_URL`·`SERVICE_KEY`) 작성 → `docker-compose.yml`·`.dockerignore`·`.env`·`mcp_server/*`·`etl/*`를 `${SERVICE_ROOT}/apartment-mcp`로 전송
+3. `deploy`: NAS에서 `docker-compose build mcp etl` → `up -d mcp etl` → `image prune` → `/healthz`를 60초까지 기다린다 → `etl` 로그에 `다음 실행`이 60초 안에 찍히는지 본다(실패하면 그 컨테이너 로그 50줄)
 
 GitHub secrets(저장소 Settings → Secrets and variables → Actions):
 
@@ -91,14 +98,38 @@ GitHub secrets(저장소 Settings → Secrets and variables → Actions):
 | `PROD_HOST`, `PROD_PORT`, `PROD_USERNAME`, `PROD_PRIVATE_KEY` | NAS SSH 접속(reco-act와 같은 값) |
 | `SERVICE_ROOT` | NAS 배포 루트(reco-act와 같은 값). 배포 폴더 `${SERVICE_ROOT}/apartment-mcp`는 이 개발 폴더와 다르다(사용자 확인) |
 | `MCP_DATABASE_URL`, `MCP_API_TOKEN` | 개발 `.env`의 같은 이름 값(`grep '^MCP_' .env`) |
+| `DATABASE_URL`, `SERVICE_KEY` | 개발 `.env`의 같은 이름 값. `etl` 컨테이너에만 넘어간다 |
 
-수동으로 띄울 때(배포 경로에서, `.env`에 MCP 두 값이 있어야 한다):
+secrets를 터미널에서 넣으려면(`gh` 로그인 필요, 값은 화면에 안 나온다): `grep '^DATABASE_URL=' .env | cut -d= -f2- | gh secret set DATABASE_URL`, `SERVICE_KEY`도 같다
+
+수동으로 띄울 때(배포 경로에서, `.env`에 네 값이 다 있어야 한다. compose가 `mcp`만 띄울 때도 `etl` 값을 요구한다):
 
 ```bash
 PATH="/var/packages/ContainerManager/target/usr/bin/:$PATH"
-docker-compose up -d --build mcp
+docker-compose up -d --build mcp etl
 docker-compose logs -f mcp               # "Uvicorn running on http://0.0.0.0:28001"이 나오면 된다
 curl -s http://127.0.0.1:28001/healthz   # NAS 안에서: ok
+docker-compose logs etl                  # "DB 접속 확인 …", "다음 실행: … 00:10 (한국 시간)"
+```
+
+### 자동 수집 (NAS etl 컨테이너)
+
+`etl.cron`이 매일 00:10(한국 시간)에 아래를 차례로 돈다. 평일 20분 안팎(매매·전월세 각 249구간 + 위치 재계산 2회 + refresh 약 2분), 일요일은 매매가 996구간이라 40분 안팎이다. 2026-10-28 사용자의 수동 증분 수집(24일 만)이 구간당 약 1.9초였다
+
+1. `etl.collect --mode incremental --kind sale --recent 3`(일요일 `--recent 12`)
+2. `etl.collect --mode incremental --kind rent`
+3. `etl.bldg`(받지 않은 필지만)
+4. `etl.refresh`
+
+- 단계가 실패해도 다음 단계로 간다. 실패한 구간·필지는 다음 날 이어서 받는다. 단계 하나가 3시간을 넘으면 끊는다
+- 실행 시각에 컨테이너가 꺼져 있었으면 따라잡지 않는다. 바로 받으려면 NAS 배포 경로에서 `docker-compose exec etl python -m etl.cron --once`, 또는 이 PC에서 `.venv/bin/python -m etl.cron --once`(`.env`를 불러온 셸). 00:10 실행과 겹치게 돌리지 않는다
+- 시작할 때 환경변수와 DB 접속을 확인하고 안 되면 종료한다(컨테이너가 다시 띄운다). 로그에 `DB 접속 확인. 마지막 갱신: …`이 찍힌다
+- 출력: `docker-compose logs --tail 200 etl`. 실행마다 `##### … 실행 시작`/`실행 끝 (소요): 모두 성공 | 실패한 단계 …`, 단계마다 `=== … 끝 (소요): 종료 코드 n`. 로그는 10MB × 5개까지 남는다
+- 로그 없이 DB로 확인:
+
+```bash
+psql "$DATABASE_URL" -c "select as_of, refreshed_at at time zone 'Asia/Seoul' from mv_refresh_log order by refreshed_at desc limit 3"
+psql "$DATABASE_URL" -c "select kind, status, count(*), max(fetched_at) at time zone 'Asia/Seoul' from ingest_log where fetched_at > now() - interval '1 day' group by 1, 2"
 ```
 
 - 외부망(휴대폰 LTE 등)에서 `https://apartment-mcp.movingjin.com/healthz`가 `ok`면 도메인·인증서·리버스 프록시가 맞다. NAS 안(kasm 포함)에서는 공인 IP로 나가는 연결이 시간 초과라 확인할 수 없다(2026-09-25)
@@ -189,6 +220,7 @@ tail -f logs/collect_full.log
 - 6단계(Phase 3): `db/migrations/0008_mcp_read.sql`(뷰 `v_danji_summary`·`v_region_distribution`·`v_region_volume_monthly`·`v_regulated_area_current`, 함수 `per_pyeong`·`max_purchase_price_for_group`, 역할 `apartment_reader`), `mcp_server/`(`server.py` 도구 등록·설명문·서버 안내문, `tools.py` 조회, `db.py` 읽기 전용 접속, `__main__.py`), `.mcp.json`, `pyproject.toml`에 `mcp>=2.2`, `.env.example`에 `MCP_DATABASE_URL`
 - 7단계: `mcp_server/web.py`(Streamable HTTP `/mcp`, stateless + JSON, 토큰 미들웨어 `RequireToken`, `/healthz`, Host 헤더 검사 끔), `__main__.py --http`, `mcp_server/Dockerfile`·`requirements.txt`, `.dockerignore`(허용 목록), `docker-compose.yml`(`mcp` 서비스, `db`는 프로필 `local-db`), `.env`·`.env.example`에 `MCP_API_TOKEN`
 - 형상관리: `.gitignore`, `.github/workflows/deploy-prod.yml`(test → build → deploy). `docker-compose.yml`의 `POSTGRES_PASSWORD`를 필수(`:?`)에서 빈 기본값으로 바꿨다. 필수로 두면 `mcp`만 띄울 때도 compose가 이 값을 요구한다
+- 테스트 366개: 2026-09-27까지 359 + 자동 수집 7(`tests/test_cron.py`: 실행 시각 한국 시간 계산, 일요일 12개월, 단계 실패·시간 초과 뒤에도 refresh까지 진행)
 - 테스트 356개: 6단계까지 342 + HTTP 14(`tests/test_mcp_web.py`: 토큰 거부 7·통과 3, `/healthz`, 토큰 길이, 실제 uvicorn으로 인증·공개 도메인 Host·MCP 클라이언트 호출)
 - 6단계까지 테스트 342개: 5단계까지 277 + MCP 65(`tests/test_mcp.py`: 읽기 전용 계정 권한 11, `0008` 뷰·함수 15, 도구 불변식·근거 추적 36, MCP 프로토콜 경유 3). MCP 테스트는 개발 DB의 실제 `mv_*`를 읽어 값 대신 불변식을 본다
 - 5단계까지 테스트 277개: 1~4단계 143 + 파생 뷰 12(가상 시군구 `99998`·`99999`에 가상 단지를 넣고 기준일을 고정. 시군구 비교 뷰 테스트 하나가 약 50초) + 예산 함수 113(손계산, Python 참조 구현과 96개 조합 대조, 규제지역) + 예외 목록 8 + 재수집 창 1
@@ -323,7 +355,8 @@ SPEC 체크리스트 "알고 있는 실거래 1건을 국토부 사이트와 대
 ## 이후 단계 메모
 
 - **건축물대장 전체 실행 뒤 점검(4단계 마무리)**: `--report`로 (1) 부가정보 없는 단지 비율이 5% 이하인지 (2) `no_households` 규모. 대부분 도시형생활주택(세대수 0, 호수만 있음)이면 호수를 세대수 대신 쓸지 정한다. 호수는 총괄표제부에서 상가 호수로도 쓰이니 주거동에 한정해야 한다 (3) 사용승인연도 ≠ 건축년도 단지가 엉뚱한 건물인지 (4) `error` 필지. 결과를 이 파일과 SPEC 변경 이력에 적는다
-- **cron에 건축물대장 추가(배포 때)**: 실거래 수집이 새 단지를 만들면 `danji` 부가정보가 NULL이다. 수집 뒤 `python -m etl.bldg`를 돌리면 새 필지만 받는다. SPEC "cron 구성"에는 아직 없다
+- **cron에 건축물대장 추가**: 했다(2026-10-28, `etl.cron` 3단계). 실거래 수집이 만든 새 단지의 필지를 그날 받는다
+- **`test_recent_trades_reproduce_danji_median`은 수집 뒤 refresh 전에 실패한다**: 원시 거래(`get_recent_trades`)는 실시간이고 시세는 `mv_*` 스냅숏이라, 그 사이에 들어온 거래만큼 어긋난다. 2026-10-28 사용자가 증분 수집을 돌리는 중에 M 그룹이 15 ≠ 14로 실패했다(기준일을 10-04로 고정해도 같다). refresh 뒤에는 맞아야 한다. 자동 실행이 돌면 매일 아침에는 맞는다
 - **전월세에만 나온 산 지번 단지 3개**: `split_jibun`이 `산22-36`을 읽지 않아 본번이 NULL이다(강동리엔파크 9·13단지, 일원상도푸르지오클라베뉴). 읽게 하면 `plat_gb_of`로 산 조회가 된다. 수가 적어 미뤘다
 - **법정동 코드**: 개편 8개 지역의 `lawd_cd`는 새 코드(예: 서해구 `2827510100`)이고 건축HUB도 새 코드로 조회된다(4단계 확인). 행정구역이 또 바뀌면 행안부 공지의 새 `jscode…(말소코드포함).zip`으로 `lawd`를 다시 적재하고 `etl/regions.py`를 맞춘다(`tests/test_regions.py`가 둘의 차이를 잡는다)
 - **`get_recent_trades`의 id**: 행 값이 바뀌면(등기일 추가, 해제) 그 거래의 `id`가 바뀐다. 근거 추적은 id보다 계약일·층·금액·면적으로 보여 준다

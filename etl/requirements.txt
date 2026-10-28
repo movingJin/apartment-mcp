@@ -1,0 +1,4 @@
+# ETL 컨테이너 의존성(etl/Dockerfile). 개발 .venv에서 검증한 버전으로 고정한다
+httpx==0.28.1
+tenacity==9.1.4
+psycopg[binary]==3.3.6

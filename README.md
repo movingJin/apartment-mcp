@@ -46,6 +46,24 @@ nohup .venv/bin/python -m etl.collect --mode full > logs/collect_full.log 2>&1 &
 
 테스트: `.venv/bin/python -m pytest` (DATABASE_URL·MCP_DATABASE_URL이 없으면 DB 관련 테스트는 건너뜀)
 
+## 자동 수집 (매일 00:10)
+
+NAS의 `etl` 컨테이너가 매일 00:10(한국 시간)에 `python -m etl.cron`으로 아래를 차례로 돌린다. 앞 단계가 실패해도 갱신까지 돌고, 실패한 구간은 다음 날 이어서 받는다.
+
+1. 매매 최근 3개월 (일요일은 12개월)
+2. 전월세 최근 3개월
+3. 건축물대장 새 필지
+4. `etl.refresh`
+
+```bash
+.venv/bin/python -m etl.cron --plan   # 다음 실행 시각과 단계 (API·DB 접속 없음)
+.venv/bin/python -m etl.cron --once   # 지금 한 번 (개발 PC에서도 된다)
+
+# NAS 배포 경로에서
+docker-compose logs --tail 100 etl                  # 지난 실행 출력
+docker-compose exec etl python -m etl.cron --once   # 컨테이너 안에서 지금 한 번
+```
+
 ## 로컬에서 빌드·실행 (MCP 서버)
 
 빌드는 따로 없고 그대로 실행한다.
@@ -58,13 +76,14 @@ nohup .venv/bin/python -m etl.collect --mode full > logs/collect_full.log 2>&1 &
 .venv/bin/python -m mcp_server --http --port 28011
 ```
 
-## Docker로 빌드·실행 (MCP 서버, HTTP)
+## Docker로 빌드·실행 (MCP 서버 HTTP, ETL 스케줄러)
 
-이미지에는 `mcp_server/`와 ETL 중 단지명 정규화·대상 시군구에 쓰이는 `etl/records.py`, `etl/regions.py`만 들어간다(`.dockerignore` 참고). DB 접속 문자열과 토큰은 `.env`에서 compose가 읽는다.
+MCP 이미지에는 `mcp_server/`와 ETL 중 단지명 정규화·대상 시군구에 쓰이는 `etl/records.py`, `etl/regions.py`만 들어간다(`mcp_server/Dockerfile`). ETL 이미지에는 `etl/`만 들어간다(`etl/Dockerfile`). 접속 문자열·토큰·키는 `.env`에서 compose가 읽고, 서비스마다 필요한 값만 넘긴다(mcp: `MCP_DATABASE_URL`·`MCP_API_TOKEN`, etl: `DATABASE_URL`·`SERVICE_KEY`).
 
 ```bash
-docker compose up -d --build mcp
+docker compose up -d --build mcp etl
 curl http://127.0.0.1:28001/healthz   # ok
+docker compose logs etl               # "다음 실행: … 00:10 (한국 시간)"
 ```
 
 필요하면 로컬 PostgreSQL도 같이 띄울 수 있다 (기본은 꺼져 있음).
@@ -75,4 +94,6 @@ docker compose --profile local-db up -d db
 
 ## 배포
 
-`main`에 push하면 GitHub Actions(`.github/workflows/deploy-prod.yml`)가 테스트 → 이미지 스모크 테스트 → NAS 전송 → `mcp` 컨테이너 재기동까지 수행한다. NAS는 공개 HTTPS로 claude.ai 커넥터에 연결된다. 수동 실행은 Actions 탭에서 가능.
+`main`에 push하면 GitHub Actions(`.github/workflows/deploy-prod.yml`)가 테스트 → 이미지 스모크 테스트 → NAS 전송 → `mcp`·`etl` 컨테이너 재기동까지 수행한다. NAS는 공개 HTTPS로 claude.ai 커넥터에 연결된다. 수동 실행은 Actions 탭에서 가능.
+
+GitHub secrets: `PROD_HOST`, `PROD_PORT`, `PROD_USERNAME`, `PROD_PRIVATE_KEY`, `SERVICE_ROOT`, `MCP_DATABASE_URL`, `MCP_API_TOKEN`, `DATABASE_URL`, `SERVICE_KEY`(마지막 둘은 개발 `.env`와 같은 값, etl 컨테이너 전용).

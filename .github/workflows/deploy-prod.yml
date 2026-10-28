@@ -1,11 +1,13 @@
 name: apartment-mcp release to NAS
 
-# main에 push되면 테스트 → 이미지 확인 → NAS로 전송 → mcp 컨테이너 재시작. Actions 탭에서 수동 실행도 된다.
+# main에 push되면 테스트 → 이미지 확인 → NAS로 전송 → mcp·etl 컨테이너 재시작. Actions 탭에서 수동 실행도 된다.
 # 필요한 secrets
 #   PROD_HOST, PROD_PORT, PROD_USERNAME, PROD_PRIVATE_KEY : NAS SSH 접속
 #   SERVICE_ROOT      : NAS 배포 루트. 파일은 ${SERVICE_ROOT}/apartment-mcp에 놓인다
 #   MCP_DATABASE_URL  : 읽기 전용 계정 접속 문자열(apartment_mcp)
 #   MCP_API_TOKEN     : claude.ai 커넥터가 보내는 토큰(32자 이상)
+#   DATABASE_URL      : ETL 쓰기 권한 접속 문자열(etl 컨테이너 전용)
+#   SERVICE_KEY       : 공공데이터포털 디코딩 키(etl 컨테이너 전용)
 on:
   push:
     branches: [ "main" ]
@@ -58,23 +60,37 @@ jobs:
         if: failure()
         run: docker logs smoke || true
 
+      # ETL 이미지: 파일이 etl뿐인지, 단계 모듈이 import되는지, 스케줄 계산(DB 접속 없음)
+      - name: Build and smoke test ETL image
+        run: |
+          set -euo pipefail
+          docker build -f etl/Dockerfile -t apartment-etl:ci .
+          test "$(docker run --rm --entrypoint ls apartment-etl:ci -A /app | tr '\n' ' ')" = "etl "
+          docker run --rm apartment-etl:ci python -c "import etl.collect, etl.bldg, etl.refresh, etl.cron"
+          docker run --rm apartment-etl:ci python -m etl.cron --plan
+
   build:
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v7
 
-      # 컨테이너에 넘길 값만 담는다(compose가 ${MCP_DATABASE_URL}·${MCP_API_TOKEN}으로 읽는다)
+      # 컨테이너에 넘길 값만 담는다. compose가 서비스마다 필요한 것만 넘긴다(mcp: MCP 두 값, etl: DATABASE_URL·SERVICE_KEY)
       - name: Set ENV file
         env:
           MCP_DATABASE_URL: ${{ secrets.MCP_DATABASE_URL }}
           MCP_API_TOKEN: ${{ secrets.MCP_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
         run: |
           set -euo pipefail
           test -n "$MCP_DATABASE_URL" || { echo "MCP_DATABASE_URL secret이 없다"; exit 1; }
           test ${#MCP_API_TOKEN} -ge 32 || { echo "MCP_API_TOKEN secret이 없거나 32자보다 짧다"; exit 1; }
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL secret이 없다"; exit 1; }
+          test -n "$SERVICE_KEY" || { echo "SERVICE_KEY secret이 없다"; exit 1; }
           umask 077
-          printf 'MCP_DATABASE_URL=%s\nMCP_API_TOKEN=%s\n' "$MCP_DATABASE_URL" "$MCP_API_TOKEN" > .env
+          printf 'MCP_DATABASE_URL=%s\nMCP_API_TOKEN=%s\nDATABASE_URL=%s\nSERVICE_KEY=%s\n' \
+            "$MCP_DATABASE_URL" "$MCP_API_TOKEN" "$DATABASE_URL" "$SERVICE_KEY" > .env
 
       - name: Transfer files
         uses: appleboy/scp-action@v1.0.0
@@ -83,7 +99,7 @@ jobs:
           username: ${{ secrets.PROD_USERNAME }}
           key: ${{ secrets.PROD_PRIVATE_KEY }}
           port: ${{ secrets.PROD_PORT }}
-          source: "docker-compose.yml,.dockerignore,.env,mcp_server/*,etl/__init__.py,etl/records.py,etl/regions.py"
+          source: "docker-compose.yml,.dockerignore,.env,mcp_server/*,etl/*"
           target: ${{ format('{0}/apartment-mcp', secrets.SERVICE_ROOT) }}
           overwrite: true
 
@@ -104,16 +120,28 @@ jobs:
             cd "${{ secrets.SERVICE_ROOT }}/apartment-mcp"
             PATH="/var/packages/ContainerManager/target/usr/bin/:$PATH"
             chmod 600 .env
-            docker-compose build mcp
-            docker-compose up -d mcp
+            docker-compose build mcp etl
+            docker-compose up -d mcp etl
             docker image prune -f
+            ok=""
             for i in $(seq 1 30); do
-              if curl -fs http://127.0.0.1:28001/healthz >/dev/null; then
-                echo "healthz ok"
+              if curl -fs http://127.0.0.1:28001/healthz >/dev/null; then ok=1; break; fi
+              sleep 2
+            done
+            if [ -z "$ok" ]; then
+              echo "healthz 응답 없음"
+              docker-compose logs --tail 50 mcp
+              exit 1
+            fi
+            echo "healthz ok"
+            # etl은 포트가 없다. DB 접속을 확인한 스케줄러가 다음 실행 시각을 찍으면 된다
+            for i in $(seq 1 30); do
+              if docker-compose logs etl 2>/dev/null | grep -q "다음 실행"; then
+                docker-compose logs --tail 3 etl
                 exit 0
               fi
               sleep 2
             done
-            echo "healthz 응답 없음"
-            docker-compose logs --tail 50 mcp
+            echo "etl 스케줄러가 뜨지 않음"
+            docker-compose logs --tail 50 etl
             exit 1
